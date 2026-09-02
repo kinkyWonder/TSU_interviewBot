@@ -1,179 +1,158 @@
-import requests
-import json
-import uuid
-import urllib3
 import re
-import time
+import json
+import urllib3
+from flask import Flask, render_template, request, jsonify
+from gigachat import GigaChat
+from gigachat.models import Chat, Messages, MessagesRole
 
-# Отключаем предупреждения об отсутствии SSL сертификатов
+# Подавление предупреждений SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Твои данные для авторизации
+app = Flask(__name__)
+
+# ==========================================
+# КОНФИГУРАЦИЯ
+# ==========================================
 AUTH_KEY = "MDFhMDYwZWYtYjI1Yi03NTRjLWIyMTYtZTk0YmIyZWUyOWJjOjZmNzI5ZDNiLWZkYjYtNDkyNC04NzA3LTk1ZjdkN2U5NDRiYg=="
+SMART_MODEL = "GigaChat-3-Ultra"
+DUMB_MODEL = "GigaChat-Pro"
 
-# Распределение моделей по твоей логике
-SMART_MODEL = "GigaChat-3-Ultra" # Для вопросов и оценки
-DUMB_MODEL = "GigaChat-Pro"    # Для финального резюме
+gc_client = GigaChat(
+    credentials=AUTH_KEY,
+    scope="GIGACHAT_API_PERS",
+    verify_ssl_certs=False
+)
 
-def get_access_token(auth_key):
-    """Получает токен доступа для GigaChat API"""
-    url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-    payload = {'scope': 'GIGACHAT_API_PERS'}
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json',
-        'RqUID': str(uuid.uuid4()),
-        'Authorization': f'Basic {auth_key}'
-    }
-    
-    response = requests.post(url, headers=headers, data=payload, verify=False)
-    if response.status_code == 200:
-        return response.json().get('access_token')
-    else:
-        print(f"Ошибка авторизации: {response.status_code}")
-        print(response.text)
-        return None
-
-def ask_gigachat(token, system_prompt, user_text, model):
-    """Отправляет запрос в конкретную модель GigaChat"""
-    url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-    
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text}
-        ],
-        "temperature": 0.7,
-        "top_p": 0.1,
-        "n": 1,
-        "stream": False,
-        "max_tokens": 1024,
-        "repetition_penalty": 1
-    })
-    
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {token}'
-    }
-    
-    response = requests.post(url, headers=headers, data=payload, verify=False)
-    
-    if response.status_code == 200:
-        return response.json()['choices'][0]['message']['content']
-    else:
-        print(f"Ошибка API (Модель: {model}): {response.status_code}")
-        print(response.text)
+def ask_gigachat(sys_prompt: str, user_text: str, model_name: str) -> str:
+    try:
+        chat = Chat(
+            model=model_name,
+            messages=[
+                Messages(role=MessagesRole.SYSTEM, content=sys_prompt),
+                Messages(role=MessagesRole.USER, content=user_text)
+            ]
+        )
+        response = gc_client.chat(chat)
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"\n[ОШИБКА API]: {e}\n")
         return ""
 
-def extract_questions(text):
-    """Парсит текст нейросети и вытаскивает только нумерованные вопросы"""
-    # Поддерживает форматы "1. Вопрос", "**1.** Вопрос", " 1. Вопрос"
-    questions = re.findall(r'^\s*(?:\*\*)?\d+\.(?:\*\*)?\s*(.+)', text, flags=re.MULTILINE)
-    return questions[:8] 
-
-def extract_score(text):
-    """Пытается найти оценку от 0 до 10 в ответе нейросети"""
+def process_evaluation_text(text: str) -> tuple[int, str]:
     match = re.search(r'(?:Оценка|оценка|Балл|балл).*?(\d+)(?:\s*/\s*10)?', text)
-    if match:
-        return int(match.group(1))
-    return 0 
-
-def main():
-    print("Подключение к серверам GigaChat...")
-    token = get_access_token(AUTH_KEY)
-    if not token:
-        return
-        
-    print("\n=======================================================")
-    print("🤖 Здравствуйте! Это ИИ-интервьюер.")
-    print("Я помогу вам подготовиться к техническому собеседованию.")
-    specialty = input("Напишите мне свое направление и специальность (например: Python Backend Developer): ")
+    score = int(match.group(1)) if match else 0
     
-    if not specialty.strip():
-        specialty = "IT специалист"
-
-    print(f"\nГенерирую вопросы (Модель: {SMART_MODEL})... Пожалуйста, подождите.\n")
+    lines = text.split('\n')
+    clean_lines = [line for line in lines if not re.search(r'(?:Оценка|оценка|Балл|балл).*?\d+', line)]
+    clean_text = '\n'.join(clean_lines).strip()
     
-    # 1. ГЕНЕРАЦИЯ ВОПРОСОВ (Умная модель - Ultra)
-    gen_prompt_sys = "Ты Senior IT-специалист, составляющий план технического собеседования."
-    gen_prompt_user = (
-        f"Выведи ТОЛЬКО пронумерованный список из 8 вопросов для собеседования на позицию: {specialty}. "
-        "Вопросы должны идти строго в порядке возрастания по важности и сложности (от базовых к архитектурным). "
-        "Не пиши никаких вступлений и заключений, только сами вопросы."
+    return score, clean_text
+
+def format_markdown_to_html(text: str) -> str:
+    return re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
+
+# ==========================================
+# МАРШРУТЫ API
+# ==========================================
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/generate', methods=['POST'])
+def generate():
+    data = request.json
+    specialty = data.get('specialty', 'Искусственный интеллект и большие данные')
+    difficulty = data.get('difficulty', 'standard')
+    
+    # Настройка параметров сложности
+    if difficulty == 'advanced':
+        diff_text = "Продвинутый уровень (6-9 вопросов). Упор на глубокое понимание архитектуры, неочевидные кейсы и оптимизацию."
+    else:
+        diff_text = "Стандартный уровень (7-9 вопросов). От базовых понятий к рабочим задачам."
+
+    sys_prompt = "Ты Senior IT-специалист, составляющий вопросы для технического собеседования."
+    user_prompt = (
+        f"Напиши вопросы для собеседования на позицию: {specialty}. "
+        f"Уровень: {diff_text}\n"
+        "Вопросы должны усложняться от первого к последнему. "
+        "Верни ответ СТРОГО в формате JSON: {\"questions\": [\"вопрос 1\", \"вопрос 2\"]} без лишнего текста и форматирования."
     )
     
-    questions_raw = ask_gigachat(token, gen_prompt_sys, gen_prompt_user, SMART_MODEL)
-    questions = extract_questions(questions_raw)
+    raw_text = ask_gigachat(sys_prompt, user_prompt, SMART_MODEL)
     
-    if not questions:
-        print("Произошла ошибка при парсинге вопросов. Ответ сети:")
-        print(questions_raw)
-        return
-        
-    interview_results = {}
-    scores_list = []
+    # Безопасный парсинг JSON с фолбэком на случай галлюцинаций модели
+    try:
+        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if json_match:
+            questions_data = json.loads(json_match.group(0))
+            questions = questions_data.get("questions", [])
+        else:
+            raise ValueError("JSON блок не найден")
+    except Exception as e:
+        print(f"Ошибка парсинга JSON, использую запасной метод. Ошибка: {e}")
+        questions = re.findall(r'^\s*(?:\*\*)?\d+\.(?:\*\*)?\s*(.+)', raw_text, flags=re.MULTILINE)
     
-    # 2. ЦИКЛ СОБЕСЕДОВАНИЯ
-    print("=======================================================")
-    print(f"Собеседование начинается. Всего вопросов: {len(questions)}")
-    print("Отвечайте максимально полно. Если не знаете — так и пишите.")
-    print("=======================================================\n")
-    
-    for i, q in enumerate(questions):
-        print(f"Вопрос {i+1}/{len(questions)}:")
-        print(f"🔹 {q}")
-        user_answer = input("\nВаш ответ:\n> ")
-        print("-" * 50)
-        
-        interview_results[q] = user_answer
-        
-    print("\nСобеседование завершено! Анализирую ваши ответы...\n")
-    time.sleep(1)
-    
-    # 3. ОЦЕНКА ОТВЕТОВ (Умная модель - Ultra)
-    eval_prompt_sys = "Ты честный, вежливый и абсолютно профессиональный IT-интервьюер. Твоя задача — объективно оценить технический ответ кандидата."
-    
-    print("================ РЕЗУЛЬТАТЫ ПО ВОПРОСАМ ================")
-    for q, a in interview_results.items():
-        eval_prompt_user = (
-            f"Вопрос с собеседования: '{q}'.\n"
-            f"Ответ кандидата: '{a}'.\n\n"
-            "Дай честную и профессиональную оценку ответу. Если ответ откровенно глупый, неверный или неполный — прямо, но вежливо укажи на это и объясни, как нужно было ответить. "
-            "Если ответ хороший — подтверди правильность, но без излишних восторгов. "
-            "В самом конце обязательно с новой строки напиши 'Оценка: X/10' (где X — балл от 0 до 10, оценивай строго)."
-        )
-        
-        feedback = ask_gigachat(token, eval_prompt_sys, eval_prompt_user, SMART_MODEL)
-        score = extract_score(feedback)
-        scores_list.append(score)
-        
-        print(f"\nВопрос: {q}")
-        print(f"Ваш ответ: {a}")
-        print(f"Комментарий ИИ:\n{feedback}")
-        print("-" * 50)
+    return jsonify({"questions": questions[:9]})
 
-    # 4. ФИНАЛЬНОЕ РЕЗЮМЕ (Младшая модель - Pro)
-    print(f"\nФормирую итоговое заключение (Модель: {DUMB_MODEL})...\n")
+@app.route('/api/evaluate', methods=['POST'])
+def evaluate():
+    data = request.json
+    q = data.get('question')
+    a = data.get('answer', '').strip()
     
-    avg_score = sum(scores_list) / len(scores_list) if scores_list else 0
+    if not a or a == '-':
+        return jsonify({"feedback": "Ответ не предоставлен.", "score": 0})
     
-    summary_sys = "Ты IT-лид, который дает неформальный фидбек после технического интервью."
-    summary_user = (
-        f"Кандидат проходил собеседование на '{specialty}'. Его средний балл: {avg_score:.1f}/10.\n"
-        f"Вот его оценки за вопросы по порядку: {scores_list}.\n\n"
-        "Напиши короткое резюме по всему собеседованию. "
-        "Опирайся на средний балл. Если балл 6.5 и выше, начни со слов 'Красава, ты бы сдал', если ниже, начни со слов 'Не красава, ты бы не сдал'. "
-        "Далее укажи, что было хорошо (исходя из высоких оценок), а что нужно обязательно подтянуть (исходя из низких оценок). "
-        "Сделай это в виде связного текста, не перечисляя сами вопросы."
+    sys_prompt = (
+        "Ты строгий, но объективный технический интервьюер. "
+        "Оценивай ответ кандидата сухо и исключительно по факту. "
+        "Если кандидат использует альтернативный, но рабочий подход, засчитай это как плюс, а не как ошибку. "
+        "При этом сохраняй профессиональную дистанцию, не будь излишне мягким и не хвали просто за попытку ответить."
+    )
+    user_prompt = (
+        f"Вопрос: '{q}'\nОтвет: '{a}'\n\n"
+        "Дай краткую оценку ответу. Структура:\n"
+        "1. Что верно.\n"
+        "2. Что неверно (или неточно).\n"
+        "3. Чего не хватает.\n"
+        "Строго запрещено объяснять теорию, давать правильный ответ или писать развернутые лекции.\n"
+        "В самом конце с новой строки напиши 'Оценка: X/10' (где X — балл от 0 до 10)."
     )
     
-    final_summary = ask_gigachat(token, summary_sys, summary_user, DUMB_MODEL)
+    raw_feedback = ask_gigachat(sys_prompt, user_prompt, SMART_MODEL)
+    score, clean_feedback = process_evaluation_text(raw_feedback)
+    feedback_html = format_markdown_to_html(clean_feedback)
     
-    print("================ ИТОГОВОЕ РЕЗЮМЕ ================")
-    print(final_summary)
-    print("=================================================")
+    return jsonify({"feedback": feedback_html, "score": score})
 
-if __name__ == "__main__":
-    main()
+@app.route('/api/summary', methods=['POST'])
+def summary():
+    data = request.json
+    scores = data.get('scores', [])
+    specialty = data.get('specialty', '')
+    
+    # Строгий математический подсчет шанса (полностью на Python)
+    max_possible = len(scores) * 10
+    total_score = sum(scores)
+    chance_calculated = int((total_score / max_possible) * 100) if max_possible > 0 else 0
+    
+    sys_prompt = (
+        "Ты IT-лид, предоставляющий официальный фидбек после собеседования. "
+        "Тон: профессиональный, официальный, объективный. Хвали чуть больше, чем критикуешь, но не скатывайся в 'няньку'."
+    )
+    user_prompt = (
+        f"Кандидат ('{specialty}') набрал {total_score} из {max_possible} возможных баллов. Оценки по каждому ответу: {scores}.\n\n"
+        "Напиши общее резюме собеседования. Отметь сильные стороны и укажи зоны для роста. "
+        "Текст должен быть сплошным (без списков). Без сленга. НЕ пиши вероятность успеха в процентах, это уже рассчитано системой."
+    )
+    
+    raw_summary = ask_gigachat(sys_prompt, user_prompt, DUMB_MODEL)
+    resume_html = format_markdown_to_html(raw_summary.strip())
+    
+    return jsonify({
+        "chance": str(chance_calculated),
+        "summary": resume_html
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True)

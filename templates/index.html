@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Интервьюер</title>
+    <style>
+        :root {
+            --bg: #f9fafb;
+            --card: #ffffff;
+            --text-main: #374151;
+            --text-dark: #111827;
+            --text-muted: #6b7280;
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --border: #e5e7eb;
+        }
+        
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            background: var(--card);
+            padding: 40px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            max-width: 650px;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .screen { display: none; }
+        .screen.active { display: block; animation: fadeIn 0.4s ease forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        h1, h2, h3 { color: var(--text-dark); margin-top: 0; margin-bottom: 20px; }
+        h1 { font-size: 24px; font-weight: 600; text-align: center; }
+        
+        input[type="text"], select, textarea {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 15px;
+            margin-bottom: 20px;
+            outline: none;
+            background: #fff;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        input[type="text"]:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1); }
+
+        .form-label { font-size: 14px; font-weight: 500; margin-bottom: 8px; display: block; color: var(--text-dark); }
+
+        .buttons-row { display: flex; gap: 12px; }
+        button {
+            flex: 1;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover { background-color: var(--primary-hover); }
+        .btn-secondary { background-color: #f3f4f6; color: var(--text-dark); border: 1px solid var(--border); }
+        .btn-secondary:hover { background-color: #e5e7eb; }
+
+        .loading-container { text-align: center; padding: 40px 0; }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--primary);
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        #dynamicLoadingText { color: var(--primary); font-weight: 500; min-height: 24px; margin-top: 15px; transition: opacity 0.3s; }
+
+        .progress-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; margin-bottom: 25px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.4s ease; }
+
+        .chance-card { text-align: center; padding: 24px; background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 20px; }
+        .chance-card h2 { margin: 0 0 10px 0; font-size: 16px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .chance-card .percentage { font-size: 42px; font-weight: 700; color: var(--primary); line-height: 1; }
+
+        .summary-card { background: #ffffff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 30px; font-size: 15px; line-height: 1.6; border-left: 4px solid var(--primary); }
+        .result-card { background: #ffffff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+        .result-card .q-title { font-weight: 600; font-size: 15px; margin-bottom: 0; }
+        
+        .score-badge { display: inline-block; padding: 6px 12px; border-radius: 8px; font-weight: 600; font-size: 13px; white-space: nowrap; margin-left: 12px; }
+        .score-high { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .score-med { background: #fef9c3; color: #854d0e; border: 1px solid #fef08a; }
+        .score-low { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- Экран 1: Старт -->
+    <div id="screen-start" class="screen active">
+        <h1>IT-Интервьюер</h1>
+        <p style="text-align: center; color: var(--text-muted); margin-bottom: 30px;">Симуляция технического собеседования</p>
+        
+        <label class="form-label">Направление или специальность:</label>
+        <input type="text" id="specialtyInput" placeholder="Например: Искусственный интеллект и большие данные">
+        
+        <label class="form-label">Сложность вопросов:</label>
+        <select id="difficultyInput">
+            <option value="standard">Стандартный (7-9 вопросов)</option>
+            <option value="advanced">Продвинутый (6-9 вопросов, усложненные)</option>
+        </select>
+
+        <button onclick="startInterview()">Начать собеседование</button>
+    </div>
+
+    <!-- Экран 2: Загрузка -->
+    <div id="screen-loading" class="screen">
+        <div class="loading-container">
+            <h2 id="loadingStatus">Подготовка...</h2>
+            <div class="loader"></div>
+            <div id="dynamicLoadingText">Сбор информации...</div>
+        </div>
+    </div>
+
+    <!-- Экран 3: Собеседование -->
+    <div id="screen-interview" class="screen">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <h3 id="questionCounter" style="color: var(--text-muted); font-size: 14px; font-weight: 500;">Вопрос 1/8</h3>
+        <h2 id="questionText" style="margin-bottom: 24px; font-size: 18px; line-height: 1.4;">Текст вопроса</h2>
+        
+        <textarea id="answerInput" rows="6" placeholder="Ваш ответ..."></textarea>
+        <p style="color: var(--text-muted); font-size: 13px; margin-top: -10px; margin-bottom: 24px;">
+            * Если не знаете ответ, оставьте поле пустым или поставьте прочерк (-).
+        </p>
+        
+        <div class="buttons-row">
+            <button id="prevBtn" class="btn-secondary" onclick="prevQuestion()" style="display: none;">Назад</button>
+            <button id="nextBtn" onclick="nextQuestion()">Далее</button>
+        </div>
+    </div>
+
+    <!-- Экран 4: Итоги -->
+    <div id="screen-results" class="screen">
+        <h1>Результаты собеседования</h1>
+        
+        <div class="chance-card">
+            <h2>Расчетный шанс успеха</h2>
+            <div class="percentage" id="chanceValue">...</div>
+        </div>
+
+        <div class="summary-card" id="summaryText">Формирование официального резюме...</div>
+
+        <h3 style="font-size: 16px; margin-top: 30px; margin-bottom: 16px;">Детальный разбор ответов</h3>
+        <div id="detailedResults"></div>
+        
+        <button class="btn-secondary" onclick="location.reload()" style="margin-top: 20px;">Пройти заново</button>
+    </div>
+</div>
+
+<script>
+    let specialty = "";
+    let difficulty = "standard";
+    let questions = [];
+    let currentQ = 0;
+    let userAnswers = []; // Хранит ответы пользователя по индексам
+    let evaluations = [];
+
+    const loadingPhrases = ["Анализ данных...", "Структурирование...", "Сверка с базой знаний...", "Оценка компетенций..."];
+    let loadingInterval;
+
+    function startDynamicText() {
+        let idx = 0;
+        const el = document.getElementById('dynamicLoadingText');
+        el.innerText = loadingPhrases[idx];
+        loadingInterval = setInterval(() => {
+            idx = (idx + 1) % loadingPhrases.length;
+            el.style.opacity = 0;
+            setTimeout(() => { el.innerText = loadingPhrases[idx]; el.style.opacity = 1; }, 300);
+        }, 2500);
+    }
+    function stopDynamicText() { clearInterval(loadingInterval); }
+    function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+
+    async function startInterview() {
+        const inp = document.getElementById('specialtyInput').value.trim();
+        specialty = inp || "Искусственный интеллект и большие данные";
+        difficulty = document.getElementById('difficultyInput').value;
+        
+        document.getElementById('loadingStatus').innerText = "Генерация вопросов...";
+        showScreen('screen-loading');
+        startDynamicText();
+        
+        try {
+            const res = await fetch('/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ specialty, difficulty })
+            });
+            const data = await res.json();
+            questions = data.questions;
+            
+            stopDynamicText();
+            if (!questions || questions.length === 0) throw new Error("Вопросы не сгенерированы");
+            
+            userAnswers = new Array(questions.length).fill(""); // Предзаполняем массив ответов пустотой
+            showScreen('screen-interview');
+            updateQuestionUI();
+        } catch (e) {
+            stopDynamicText();
+            alert("Произошла ошибка. Попробуйте еще раз.");
+            showScreen('screen-start');
+        }
+    }
+
+    function updateQuestionUI() {
+        document.getElementById('questionCounter').innerText = `Вопрос ${currentQ + 1} из ${questions.length}`;
+        document.getElementById('questionText').innerText = questions[currentQ];
+        document.getElementById('answerInput').value = userAnswers[currentQ]; // Восстанавливаем прошлый ответ, если есть
+        document.getElementById('progressFill').style.width = `${(currentQ / questions.length) * 100}%`;
+        
+        // Управление видимостью кнопок
+        document.getElementById('prevBtn').style.display = currentQ > 0 ? 'block' : 'none';
+        document.getElementById('nextBtn').innerText = currentQ === questions.length - 1 ? 'Завершить' : 'Далее';
+    }
+
+    function nextQuestion() {
+        userAnswers[currentQ] = document.getElementById('answerInput').value.trim(); // Сохраняем текст
+        if (currentQ < questions.length - 1) {
+            currentQ++;
+            updateQuestionUI();
+        } else {
+            document.getElementById('progressFill').style.width = '100%';
+            startEvaluation();
+        }
+    }
+
+    function prevQuestion() {
+        userAnswers[currentQ] = document.getElementById('answerInput').value.trim(); // Сохраняем перед уходом назад
+        if (currentQ > 0) {
+            currentQ--;
+            updateQuestionUI();
+        }
+    }
+
+    async function startEvaluation() {
+        showScreen('screen-loading');
+        startDynamicText();
+        
+        for (let i = 0; i < questions.length; i++) {
+            document.getElementById('loadingStatus').innerText = `Проверка ответа ${i + 1}/${questions.length}`;
+            const res = await fetch('/api/evaluate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question: questions[i], answer: userAnswers[i] })
+            });
+            const data = await res.json();
+            evaluations.push({ q: questions[i], a: userAnswers[i], feedback: data.feedback, score: data.score });
+        }
+        
+        stopDynamicText();
+        showScreen('screen-results');
+        renderDetailedResults();
+        fetchSummary(); 
+    }
+
+    function renderDetailedResults() {
+        const container = document.getElementById('detailedResults');
+        container.innerHTML = "";
+        
+        evaluations.forEach((item, index) => {
+            const displayAnswer = item.a === "" || item.a === "-" ? "Ответ не предоставлен" : item.a;
+            
+            let badgeClass = 'score-low';
+            if (item.score >= 8) badgeClass = 'score-high';
+            else if (item.score >= 5) badgeClass = 'score-med';
+            
+            const card = document.createElement('div');
+            card.className = 'result-card';
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                    <div class="q-title">${index + 1}. ${item.q}</div>
+                    <span class="score-badge ${badgeClass}">Оценка: ${item.score}/10</span>
+                </div>
+                <p style="color: var(--text-muted); background: #f9fafb; padding: 10px; border-radius: 6px; border: 1px solid var(--border);"><strong>Ваш ответ:</strong> ${displayAnswer}</p>
+                <p style="margin: 16px 0 0 0; white-space: pre-wrap;">${item.feedback}</p>
+            `;
+            container.appendChild(card);
+        });
+    }
+
+    async function fetchSummary() {
+        const scores = evaluations.map(e => e.score);
+        const res = await fetch('/api/summary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scores: scores, specialty: specialty })
+        });
+        const data = await res.json();
+        
+        document.getElementById('chanceValue').innerText = data.chance + "%";
+        document.getElementById('summaryText').innerHTML = data.summary;
+    }
+</script>
+
+</body>
+</html>
