@@ -13,7 +13,7 @@ app = Flask(__name__)
 # ==========================================
 # КОНФИГУРАЦИЯ
 # ==========================================
-AUTH_KEY = "MDFhMDYwZWYtYjI1Yi03NTRjLWIyMTYtZTk0YmIyZWUyOWJjOjZmNzI5ZDNiLWZkYjYtNDkyNC04NzA3LTk1ZjdkN2U5NDRiYg=="
+AUTH_KEY = "key"
 SMART_MODEL = "GigaChat-3-Ultra"
 DUMB_MODEL = "GigaChat-Pro"
 
